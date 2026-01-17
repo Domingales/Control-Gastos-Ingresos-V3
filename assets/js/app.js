@@ -1,4 +1,4 @@
-﻿/* app.js - Control de Gastos v1 */
+/* app.js - Control de Gastos v3 */
 (async function(){
   const appEl = document.getElementById("app");
   const loadingEl = document.getElementById("loading");
