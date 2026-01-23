@@ -1017,91 +1017,382 @@ await DB.putTr(state.db, obj);
     };
   }
 
-  // ---------- Export (XLSX) builders ----------
+
+  // ---------- Modal: Añadir / Borrar cuenta ----------
+  function safeAccountId(){
+    // U.uid() ya se usa para 
+
+movimientos/transferencias; si no existiera por algún motivo, fallback.
+    try{
+      const u = (typeof U!=="undefined" && typeof 
+
+U.uid==="function") ? U.uid() : null;
+      if(u) return "acc_"+String(u).replace(/[^a-zA-Z0-9_-]/g,"");
+    }catch(_){}
+    return 
+
+"acc_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,8);
+  }
+
+  function normName(s){ return String
+
+(s||"").trim().toLowerCase(); }
+
+  function openAddAccountModal(){
+    const nameInp = U.el("input",{class:"input", 
+
+placeholder:"Nombre de la cuenta…"});
+    const initInp = U.el("input",{class:"input", type:"number", step:"0.01", 
+
+placeholder:"Saldo inicial (opcional)", value:"0"});
+    const tip = U.el("div",{class:"tiny muted", text:"Consejo: puedes crear 
+
+varias cuentas (p. ej., 'Banco 1', 'Banco 2', 'Ahorros', etc.)."});
+
+    const saveBtn = U.el("button",{class:"btn primary", 
+
+text:"Añadir"});
+    const cancelBtn = U.el("button",{class:"btn", text:"Cancelar"});
+
+    const modal = U.openModal({
+      
+
+title:"Añadir cuenta",
+      contentNode: U.el("div",{class:"grid", style:"gap:10px"},[
+        U.el("div",{},[U.el("div",{class:"tiny 
+
+muted",text:"Nombre"}), nameInp]),
+        U.el("div",{},[U.el("div",{class:"tiny muted",text:"Saldo inicial"}), initInp]),
+        tip
+   
+
+   ]),
+      footerNodes:[cancelBtn, saveBtn]
+    });
+
+    cancelBtn.onclick = ()=> modal.close();
+
+    saveBtn.onclick = async ()=>{
+      const 
+
+name = String(nameInp.value||"").trim();
+      if(!name){
+        U.toast("Escribe un nombre para la cuenta.");
+        nameInp.focus
+
+();
+        return;
+      }
+      const exists = accounts().some(a=> normName(a.name) === normName(name));
+      if(exists){
+        U.toast
+
+("Ya existe una cuenta con ese nombre.");
+        nameInp.focus();
+        return;
+      }
+      const initialBalance = ensureNum
+
+(initInp.value);
+      const id = safeAccountId();
+
+      state.settings.accounts = [...accounts(), {id, name, initialBalance}];
+      await 
+
+DB.saveSettings(state.db, state.settings);
+
+      modal.close();
+      U.toast("Cuenta añadida.");
+      await render();
+    };
+  }
+
+  function 
+
+openDeleteAccountModal(){
+    const accs = accounts();
+
+    if(accs.length<=1){
+      U.toast("No puedes borrar la última cuenta.");
+   
+
+   return;
+    }
+
+    const sel = U.el("select",{class:"input"});
+    for(const a of accs){
+      sel.appendChild(U.el("option",{value:a.id, 
+
+text:a.name}));
+    }
+
+    const info = U.el("div",{class:"tiny muted", text:"Selecciona una cuenta para ver su extracto y opciones 
+
+de borrado."});
+
+    const reassignWrap = U.el("div",{style:"display:none"});
+    const reassignSel = U.el("select",{class:"input"});
+  
+
+  const reassignHint = U.el("div",{class:"tiny muted", style:"margin-top:6px", text:"Esta cuenta tiene 
+
+movimientos/transferencias. Para borrarla con seguridad, reasigna su historial a otra cuenta."});
+    
+
+reassignWrap.appendChild(U.el("div",{class:"tiny muted", text:"Reasignar historial a:"}));
+    reassignWrap.appendChild
+
+(reassignSel);
+    reassignWrap.appendChild(reassignHint);
+
+    let txAll = null;
+    let trAll = null;
+
+    async function ensureAllLoaded
+
+(){
+      if(!txAll) txAll = await DB.listAllTx(state.db);
+      if(!trAll) trAll = await DB.listAllTr(state.db);
+    }
+
+    function 
+
+fillReassignOptions(delId){
+      reassignSel.innerHTML = "";
+      const others = accounts().filter(a=>a.id!==delId);
+      for(const a of 
+
+others){
+        reassignSel.appendChild(U.el("option",{value:a.id, text:a.name}));
+      }
+    }
+
+    async function refresh(){
+      const 
+
+delId = sel.value;
+      await ensureAllLoaded();
+
+      const txCount = (txAll||[]).filter(t=>(t.accountId||"cash")===delId).length;
+      
+
+const trCount = (trAll||[]).filter(x=>x.fromAccountId===delId || x.toAccountId===delId).length;
+
+      if(txCount===0 && 
+
+trCount===0){
+        info.textContent = "La cuenta no tiene movimientos ni transferencias asociados. Puedes borrarla.";
+        
+
+reassignWrap.style.display = "none";
+      }else{
+        info.textContent = `La cuenta tiene ${txCount} movimientos y ${trCount} 
+
+transferencias asociados. Para borrarla, debes reasignar ese historial.`;
+        fillReassignOptions(delId);
+        
+
+reassignWrap.style.display = "";
+      }
+    }
+
+    sel.addEventListener("change", ()=>{ refresh(); });
+
+    const delBtn = U.el("button",
+
+{class:"btn danger", text:"Borrar cuenta"});
+    const cancelBtn = U.el("button",{class:"btn", text:"Cancelar"});
+
+    const modal = 
+
+U.openModal({
+      title:"Borrar cuenta",
+      contentNode: U.el("div",{class:"grid", style:"gap:10px"},[
+        U.el("div",{},[U.el
+
+("div",{class:"tiny muted",text:"Cuenta"}), sel]),
+        info,
+        reassignWrap
+      ]),
+      footerNodes:[cancelBtn, delBtn]
+    });
+
+    
+
+cancelBtn.onclick = ()=> modal.close();
+
+    delBtn.onclick = async ()=>{
+      const delId = sel.value;
+
+      if(accounts().length<=1){
+        
+
+U.toast("No puedes borrar la última cuenta.");
+        return;
+      }
+
+      await ensureAllLoaded();
+      const txRel = (txAll||[]).filter
+
+(t=>(t.accountId||"cash")===delId);
+      const trRel = (trAll||[]).filter(x=>x.fromAccountId===delId || x.toAccountId===delId);
+
+    
+
+  // Si hay historial, exigimos reasignación (seguro y reversible).
+      let reassignTo = null;
+      if(txRel.length || trRel.length){
+        
+
+reassignTo = reassignSel.value;
+        if(!reassignTo){
+          U.toast("Selecciona una cuenta de destino para reasignar.");
+          
+
+return;
+        }
+      }
+
+      const ok = await U.confirmDialog({
+        title:"Confirmar borrado",
+        message: (txRel.length || trRel.length)
+  
+
+        ? "Se reasignará el historial a otra cuenta y luego se borrará la cuenta seleccionada. ¿Continuar?"
+          : "Se borrará la 
+
+cuenta seleccionada. ¿Continuar?",
+        okText:"Borrar",
+        cancelText:"Cancelar"
+      });
+      if(!ok) return;
+
+      // Reasignación (si 
+
+procede)
+      if(reassignTo){
+        for(const t of txRel){
+          t.accountId = reassignTo;
+          await DB.putTx(state.db, t);
+        }
+        
+
+for(const x of trRel){
+          if(x.fromAccountId===delId) x.fromAccountId = reassignTo;
+          if(x.toAccountId===delId) 
+
+x.toAccountId = reassignTo;
+          await DB.putTr(state.db, x);
+        }
+      }
+
+      // Borrar cuenta de settings
+      state.settings.accounts 
+
+= accounts().filter(a=>a.id!==delId);
+
+      // Si la cuenta borrada era la que se usaba por defecto en algún sitio (p. ej., selector 
+
+inicial),
+      // no hace falta más: los selectores se repintan con render().
+      await DB.saveSettings(state.db, state.settings);
+
+      
+
+modal.close();
+      U.toast("Cuenta borrada.");
+      await render();
+    };
+
+    // inicial
+    refresh();
+  }
+
+  // ---------- Export (XLSX) builders 
+
+----------
   function rowsMovements(txList){
-    const rows = 
+    const rows = [["Fecha","Tipo","Categoría","Cuenta","Nota","Importe"]];
+    for
 
-[["Fecha","Tipo","Categoría","Cuenta","Nota","Importe"]];
-    for(const t of txList){
+(const t of txList){
       rows.push([
-        new Date
+        new Date(t.dateMs).toLocaleDateString("es-ES"),
+        t.type==="income" ? "Ingreso" : 
 
-(t.dateMs).toLocaleDateString("es-ES"),
-        t.type==="income" ? "Ingreso" : "Gasto",
+"Gasto",
         catById(t.categoryId)?.name || "",
-       
+        accById(t.accountId)?.name || "",
+        t.note || "",
+        ensureNum(t.amount)
+    
 
- accById(t.accountId)?.name || "",
+  ]);
+    }
+    // total
+    const {income, expense, balance} = sumPeriod(txList);
+    rows.push(["","","","","TOTAL INGRESOS", 
+
+income]);
+    rows.push(["","","","","TOTAL GASTOS", expense]);
+    rows.push(["","","","","BALANCE", balance]);
+    return 
+
+rows;
+  }
+
+  function rowsTransfers(trList){
+    const rows = [["Fecha","Desde","Hacia","Nota","Importe"]];
+    for(const t of trList){
+  
+
+    rows.push([
+        new Date(t.dateMs).toLocaleDateString("es-ES"),
+        accById(t.fromAccountId)?.name || "",
+        accById
+
+(t.toAccountId)?.name || "",
         t.note || "",
         ensureNum(t.amount)
       ]);
     }
-    // total
-    const {income, expense, 
-
-balance} = sumPeriod(txList);
-    rows.push(["","","","","TOTAL INGRESOS", income]);
-    rows.push(["","","","","TOTAL 
-
-GASTOS", expense]);
-    rows.push(["","","","","BALANCE", balance]);
     return rows;
   }
 
-  function rowsTransfers(trList){
-    const 
+  function rowsByCategory
 
-rows = [["Fecha","Desde","Hacia","Nota","Importe"]];
-    for(const t of trList){
-      rows.push([
-        new Date
-
-(t.dateMs).toLocaleDateString("es-ES"),
-        accById(t.fromAccountId)?.name || "",
-        accById(t.toAccountId)?.name || "",
-        
-
-t.note || "",
-        ensureNum(t.amount)
-      ]);
-    }
-    return rows;
-  }
-
-  function rowsByCategory(txList){
-    const exp = 
-
-groupByCategoryExpenses(txList);
+(txList){
+    const exp = groupByCategoryExpenses(txList);
     const rows = [["Categoría","Gasto"]];
-    const items = Array.from(exp.entries()).map
+    const items = Array.from
 
-(([catId, amt])=>({catId, amt}))
+(exp.entries()).map(([catId, amt])=>({catId, amt}))
       .sort((a,b)=>b.amt-a.amt);
     for(const it of items){
-      rows.push([catById(it.catId)?.name 
+      rows.push
 
-|| it.catId, ensureNum(it.amt)]);
+([catById(it.catId)?.name || it.catId, ensureNum(it.amt)]);
     }
     return rows;
   }
 
   function rowsByAccountPeriod(txList, trList){
-    const net = 
+    
 
-groupByAccountNet(txList, trList);
+const net = groupByAccountNet(txList, trList);
     const rows = [["Cuenta","Variación en periodo"]];
-    for(const a of accounts()){
-      
+    for(const a of accounts
 
-rows.push([a.name, ensureNum(net.get(a.id)||0)]);
+()){
+      rows.push([a.name, ensureNum(net.get(a.id)||0)]);
     }
     return rows;
   }
 
   function rowsBudget(txList, capFactor=1){
-    const 
+    
 
-exp = groupByCategoryExpenses(txList);
+const exp = groupByCategoryExpenses(txList);
     const rows = [["Categoría","Tope","Gastado","Restante"]];
     for(const c of 
 
@@ -1309,29 +1600,29 @@ balancesEnd = snap.snaps.get(endMs) || new Map();
 
 const rows = accounts().map(a=>
 
-[a.name, U.money((balancesNow.get(a.id)||0), state.settings.currency)]);
-    const html = tableHtml(["Cuenta","Saldo 
+[a.name, U.money(balances.get(a.id)||0, state.settings.currency)]);
+    const html = tableHtml(["Cuenta","Saldo actual"], 
 
-actual"], rows, new Set([1]));
-    Print.printHtml({title:"Cuentas", subtitle:`Saldo actual (histórico). Periodo visual: ${label}`, 
-
-html});
+rows, new Set([1]));
+    Print.printHtml({title:"Cuentas", subtitle:`Saldo actual (histórico). Periodo visual: ${label}`, html});
   }
 
-  // ---------- Views ----------
+  // 
+
+---------- Views ----------
   async function viewPanel(){
     setSubtitle("Resumen del periodo");
     await loadPeriodData();
 
-  
+    const 
 
-  const meta = activeRangeMeta();
+meta = activeRangeMeta();
     const label = meta.label;
     const txList = state.cache.tx;
     const trList = state.cache.tr;
-    
+    const 
 
-const sums = sumPeriod(txList);
+sums = sumPeriod(txList);
 
     const head = sectionHeader("Panel", U.el("div",{class:"row", style:"gap:8px"},[
       
@@ -1846,446 +2137,441 @@ loadPeriodData();
     const meta = activeRangeMeta();
     const label = meta.label;
 
-    const startMs = meta.start.getTime();
-    
+    const balances = await computeBalances
 
-const endMs = meta.end.getTime();
-    const snap = await computeBalancesSnapshots([startMs, endMs]);
-    const 
-
-balancesStart = snap.snaps.get(startMs) || new Map();
-    const balancesEnd = snap.snaps.get(endMs) || new Map();
-    const 
-
-balancesNow = snap.now;
+();
 
     const head = sectionHeader("Cuentas", U.el("div",{class:"row", style:"gap:8px"},[
-      
+      rangeControls(),
+      printBtn(()
 
-rangeControls(),
-      printBtn(()=>printAccounts()),
+=>printAccounts()),
       exportBtn(async ()=>{
         const rows = [["Cuenta","Saldo actual"]];
-        
+        for(const a of accounts()) 
 
-for(const a of accounts()) rows.push([a.name, ensureNum(balancesNow.get(a.id)||0)]);
-        XLSXMini.exportXLSX({ 
+rows.push([a.name, ensureNum(balancesNow.get(a.id)||0)]);
+        XLSXMini.exportXLSX({ filename:`ControlGastos_Cuentas_
 
-filename:`ControlGastos_Cuentas_${label.replace(/\s+/g,"_")}.xlsx`, sheets:[{name:"Cuentas", rows, currencyCols:[1]}] });
-      
+${label.replace(/\s+/g,"_")}.xlsx`, sheets:[{name:"Cuentas", rows, currencyCols:[1]}] });
+      }),
+      U.el("button",{class:"btn 
 
-}),
-      U.el("button",{class:"btn primary small", text:"Transferir", onclick: ()=> openTransferModal({})})
+small", text:"Añadir cuenta", onclick: ()=> openAddAccountModal()}),
+      U.el("button",{class:"btn danger small", 
+
+text:"Borrar cuenta", onclick: ()=> openDeleteAccountModal()}),
+      U.el("button",{class:"btn primary small", 
+
+text:"Transferir", onclick: ()=> openTransferModal({})})
     ]));
 
-    const cards = 
+    const cards = U.el("div",{class:"grid cols2"});
 
-U.el("div",{class:"grid cols2"});
+    for(const a of 
 
-    for(const a of accounts()){
-      const bal = ensureNum(balancesNow.get(a.id)||0);
-      const 
+accounts()){
+      const bal = ensureNum(balances.get(a.id)||0);
+      const card = U.el("div",{class:"card"},[
+        U.el("div",
 
-card = U.el("div",{class:"card"},[
-        U.el("div",{class:"row space"},[
+{class:"row space"},[
           U.el("div",{class:"h2", text:a.name}),
-          U.el
-
-("span",{class:"badge", text:"Saldo"})
+          U.el("span",{class:"badge", text:"Saldo"})
         ]),
-        U.el("div",{style:"font-size:22px;font-weight:900;margin-top:8px;font-
-
-variant-numeric:tabular-nums"}, U.money(bal, state.settings.currency)),
-        U.el("div",{class:"tiny muted", style:"margin-
-
-top:6px"}, "Incluye saldo inicial + histórico de movimientos y transferencias."),
-        U.el("hr",{class:"sep"}),
         U.el
 
-("button",{class:"btn small", text:"Ver extracto del periodo", onclick: ()=> openAccountExtractModal(a.id)})
-      ]);
-      
+("div",{style:"font-size:22px;font-weight:900;margin-top:8px;font-variant-numeric:tabular-nums"}, U.money(bal, 
 
-cards.appendChild(card);
+state.settings.currency)),
+        U.el("div",{class:"tiny muted", style:"margin-top:6px"}, "Incluye saldo inicial + histórico de 
+
+movimientos y transferencias."),
+        U.el("hr",{class:"sep"}),
+        U.el("button",{class:"btn small", text:"Ver extracto del 
+
+periodo", onclick: ()=> openAccountExtractModal(a.id)})
+      ]);
+      cards.appendChild(card);
     }
 
-    async function openAccountExtractModal(accountId){
+    async function 
+
+openAccountExtractModal(accountId){
       const acc = accById(accountId);
-      
+      const txList = state.cache.tx.filter(t=>
 
-const txList = state.cache.tx.filter(t=>(t.accountId||"cash")===accountId);
-      const trList = state.cache.tr.filter
+(t.accountId||"cash")===accountId);
+      const trList = state.cache.tr.filter(t=>t.fromAccountId===accountId || 
 
-(t=>t.fromAccountId===accountId || t.toAccountId===accountId)
+t.toAccountId===accountId)
         .sort((a,b)=>b.dateMs-a.dateMs);
 
-      const content = 
+      const content = U.el("div",{class:"col"},[
+        U.el("div",
 
-U.el("div",{class:"col"},[
-        U.el("div",{class:"tiny muted", text:`Rango: ${label}`}),
-        U.el("div",{class:"grid cols2", 
-
-style:"margin-top:8px"},[
-          U.el("div",{class:"kpi"},[
-            U.el("div",{class:"label",text:"Saldo inicio rango"}),
-            U.el
-
-("div",{class:"value",text:U.money((balancesStart.get(accountId)||0), state.settings.currency)})
-          ]),
+{class:"tiny muted", text:`Rango: ${label}`}),
+        U.el("div",{class:"grid cols2", style:"margin-top:8px"},[
           U.el("div",
 
 {class:"kpi"},[
-            U.el("div",{class:"label",text:"Saldo fin rango"}),
+            U.el("div",{class:"label",text:"Saldo inicio rango"}),
             U.el("div",{class:"value",text:U.money
 
-((balancesEnd.get(accountId)||0), state.settings.currency)})
+((balancesStart.get(accountId)||0), state.settings.currency)})
           ]),
           U.el("div",{class:"kpi"},[
             U.el("div",
 
-{class:"label",text:"Variación en rango"}),
-            U.el("div",{class:"value",text:U.money(((balancesEnd.get(accountId)||0) - 
-
-(balancesStart.get(accountId)||0)), state.settings.currency)})
-          ]),
-          U.el("div",{class:"kpi"},[
-            U.el("div",
-
-{class:"label",text:"Saldo actual"}),
-            U.el("div",{class:"value",text:U.money((balancesNow.get(accountId)||0), 
+{class:"label",text:"Saldo fin rango"}),
+            U.el("div",{class:"value",text:U.money((balancesEnd.get(accountId)||0), 
 
 state.settings.currency)})
           ]),
+          U.el("div",{class:"kpi"},[
+            U.el("div",{class:"label",text:"Variación en rango"}),
+          
+
+  U.el("div",{class:"value",text:U.money(((balancesEnd.get(accountId)||0) - (balancesStart.get(accountId)||0)), 
+
+state.settings.currency)})
+          ]),
+          U.el("div",{class:"kpi"},[
+            U.el("div",{class:"label",text:"Saldo actual"}),
+            U.el
+
+("div",{class:"value",text:U.money((balancesNow.get(accountId)||0), state.settings.currency)})
+          ]),
         ]),
-        U.el("hr",{class:"sep"}),
+        U.el("hr",
+
+{class:"sep"}),
         U.el("div",{class:"h2", text:"Movimientos"}),
       ]);
 
+      const movTable = U.el("table",{class:"table"});
       
 
-const movTable = U.el("table",{class:"table"});
-      movTable.appendChild(U.el("thead",{}, U.el("tr",{},[
-        U.el("th",
-
-{text:"Fecha"}),
+movTable.appendChild(U.el("thead",{}, U.el("tr",{},[
+        U.el("th",{text:"Fecha"}),
         U.el("th",{text:"Tipo"}),
-        U.el("th",{text:"Categoría"}),
-        U.el("th",{text:"Importe", style:"text-
+        U.el
 
-align:right"}),
+("th",{text:"Categoría"}),
+        U.el("th",{text:"Importe", style:"text-align:right"}),
       ])));
-      const movBody = U.el("tbody",{});
+      const movBody = U.el("tbody",
+
+{});
       movTable.appendChild(movBody);
       txList.forEach(t=>{
-        
-
-movBody.appendChild(U.el("tr",{},[
-          U.el("td",{text:new Date(t.dateMs).toLocaleDateString("es-ES")}),
+        movBody.appendChild(U.el("tr",{},[
           U.el("td",
 
-{text:t.type==="income"?"Ingreso":"Gasto"}),
-          U.el("td",{text:catById(t.categoryId)?.name || ""}),
-          U.el("td",
+{text:new Date(t.dateMs).toLocaleDateString("es-ES")}),
+          U.el("td",{text:t.type==="income"?"Ingreso":"Gasto"}),
+          
 
-{class:"num", text: (t.type==="income"?"+":"-")+U.money(t.amount, state.settings.currency)})
+U.el("td",{text:catById(t.categoryId)?.name || ""}),
+          U.el("td",{class:"num", text: (t.type==="income"?"+":"-")+U.money
+
+(t.amount, state.settings.currency)})
         ]));
       });
+      content.appendChild(movTable);
+
+      content.appendChild(U.el("div",
+
+{class:"h2", style:"margin-top:12px"}, "Transferencias"));
+      const trTable = U.el("table",{class:"table"});
       
 
-content.appendChild(movTable);
-
-      content.appendChild(U.el("div",{class:"h2", style:"margin-top:12px"}, 
-
-"Transferencias"));
-      const trTable = U.el("table",{class:"table"});
-      trTable.appendChild(U.el("thead",{}, U.el("tr",{},[
-        
-
-U.el("th",{text:"Fecha"}),
+trTable.appendChild(U.el("thead",{}, U.el("tr",{},[
+        U.el("th",{text:"Fecha"}),
         U.el("th",{text:"Dirección"}),
-        U.el("th",{text:"Otra cuenta"}),
-        U.el("th",{text:"Importe", 
+        U.el
 
-style:"text-align:right"}),
+("th",{text:"Otra cuenta"}),
+        U.el("th",{text:"Importe", style:"text-align:right"}),
       ])));
-      const trBody = U.el("tbody",{});
+      const trBody = U.el("tbody",
+
+{});
       trTable.appendChild(trBody);
       trList.forEach(t=>{
+        const dir = (t.fromAccountId===accountId) ? "Sale a" : "Entra 
+
+de";
+        const other = (t.fromAccountId===accountId) ? accById(t.toAccountId)?.name : accById(t.fromAccountId)?.name;
         
 
-const dir = (t.fromAccountId===accountId) ? "Sale a" : "Entra de";
-        const other = (t.fromAccountId===accountId) ? 
+const sign = (t.fromAccountId===accountId) ? "-" : "+";
+        trBody.appendChild(U.el("tr",{},[
+          U.el("td",{text:new Date
 
-accById(t.toAccountId)?.name : accById(t.fromAccountId)?.name;
-        const sign = (t.fromAccountId===accountId) ? "-" : "+";
-   
-
-     trBody.appendChild(U.el("tr",{},[
-          U.el("td",{text:new Date(t.dateMs).toLocaleDateString("es-ES")}),
+(t.dateMs).toLocaleDateString("es-ES")}),
+          U.el("td",{text:dir}),
+          U.el("td",{text:other || ""}),
           U.el("td",
 
-{text:dir}),
-          U.el("td",{text:other || ""}),
-          U.el("td",{class:"num", text: sign+U.money(t.amount, 
-
-state.settings.currency)})
+{class:"num", text: sign+U.money(t.amount, state.settings.currency)})
         ]));
       });
       content.appendChild(trTable);
 
-      const exportBtn2 = U.el("button",{class:"btn 
+      const 
 
-small", text:"Exportar XLSX (extracto)", onclick: ()=>{
-        const rows1 = [["Fecha","Tipo","Categoría","Importe"]];
-        
+exportBtn2 = U.el("button",{class:"btn small", text:"Exportar XLSX (extracto)", onclick: ()=>{
+        const rows1 = 
 
-txList.forEach(t=>rows1.push([new Date(t.dateMs).toLocaleDateString("es-ES"), t.type==="income"?"Ingreso":"Gasto", 
+[["Fecha","Tipo","Categoría","Importe"]];
+        txList.forEach(t=>rows1.push([new Date(t.dateMs).toLocaleDateString("es-
 
-catById(t.categoryId)?.name||"", (t.type==="income"?1:-1)*ensureNum(t.amount)]));
-        const rows2 = 
+ES"), t.type==="income"?"Ingreso":"Gasto", catById(t.categoryId)?.name||"", (t.type==="income"?1:-1)*ensureNum
 
-[["Fecha","Dirección","Otra cuenta","Importe"]];
+(t.amount)]));
+        const rows2 = [["Fecha","Dirección","Otra cuenta","Importe"]];
         trList.forEach(t=>{
-          const dir = (t.fromAccountId===accountId) ? 
+          const dir = 
 
-"Sale a" : "Entra de";
-          const other = (t.fromAccountId===accountId) ? accById(t.toAccountId)?.name : accById
+(t.fromAccountId===accountId) ? "Sale a" : "Entra de";
+          const other = (t.fromAccountId===accountId) ? accById
 
-(t.fromAccountId)?.name;
+(t.toAccountId)?.name : accById(t.fromAccountId)?.name;
           const sign = (t.fromAccountId===accountId) ? -1 : 1;
-          rows2.push([new Date
-
-(t.dateMs).toLocaleDateString("es-ES"), dir, other||"", sign*ensureNum(t.amount)]);
-        });
-        XLSXMini.exportXLSX({
           
 
-filename:`ControlGastos_Extracto_${acc?.name||accountId}_${label.replace(/\s+/g,"_")}.xlsx`,
-          sheets:[
-            
-
-{name:"Movimientos", rows: rows1, currencyCols:[3]},
-            {name:"Transferencias", rows: rows2, currencyCols:[3]},
-          ]
+rows2.push([new Date(t.dateMs).toLocaleDateString("es-ES"), dir, other||"", sign*ensureNum(t.amount)]);
+        });
         
 
-});
+XLSXMini.exportXLSX({
+          filename:`ControlGastos_Extracto_${acc?.name||accountId}_${label.replace(/\s+/g,"_")}.xlsx`,
+       
+
+   sheets:[
+            {name:"Movimientos", rows: rows1, currencyCols:[3]},
+            {name:"Transferencias", rows: rows2, 
+
+currencyCols:[3]},
+          ]
+        });
       }});
 
-      const printBtn2 = U.el("button",{class:"btn small", text:"Imprimir extracto", onclick: ()=>{
-        // Simple print: 
+      const printBtn2 = U.el("button",{class:"btn small", text:"Imprimir extracto", onclick: 
 
-combine tables
+()=>{
+        // Simple print: combine tables
         const movRows = txList.map(t=>[
-          new Date(t.dateMs).toLocaleDateString("es-ES"),
+          new Date(t.dateMs).toLocaleDateString
+
+("es-ES"),
+          t.type==="income"?"Ingreso":"Gasto",
+          catById(t.categoryId)?.name||"",
           
 
-t.type==="income"?"Ingreso":"Gasto",
-          catById(t.categoryId)?.name||"",
-          (t.type==="income"?"+":"-")+U.money
-
-(t.amount, state.settings.currency)
+(t.type==="income"?"+":"-")+U.money(t.amount, state.settings.currency)
         ]);
         const trRows = trList.map(t=>{
-          const dir = (t.fromAccountId===accountId) ? 
+          const 
 
-"Sale a" : "Entra de";
-          const other = (t.fromAccountId===accountId) ? accById(t.toAccountId)?.name : accById
+dir = (t.fromAccountId===accountId) ? "Sale a" : "Entra de";
+          const other = (t.fromAccountId===accountId) ? accById
 
-(t.fromAccountId)?.name;
+(t.toAccountId)?.name : accById(t.fromAccountId)?.name;
           const sign = (t.fromAccountId===accountId) ? "-" : "+";
-          return [new Date
+          
 
-(t.dateMs).toLocaleDateString("es-ES"), dir, other||"", sign+U.money(t.amount, state.settings.currency)];
-        });
-        const 
+return [new Date(t.dateMs).toLocaleDateString("es-ES"), dir, other||"", sign+U.money(t.amount, state.settings.currency)];
+     
 
-html = "<h3 style='margin:10px 0 8px'>Movimientos</h3>" +
-          tableHtml(["Fecha","Tipo","Categoría","Importe"], 
-
-movRows, new Set([3])) +
-          "<h3 style='margin:14px 0 8px'>Transferencias</h3>" +
+   });
+        const html = "<h3 style='margin:10px 0 8px'>Movimientos</h3>" +
           tableHtml
 
-(["Fecha","Dirección","Otra cuenta","Importe"], trRows, new Set([3]));
-        Print.printHtml({title:`Extracto - 
+(["Fecha","Tipo","Categoría","Importe"], movRows, new Set([3])) +
+          "<h3 style='margin:14px 0 
 
-${acc?.name||""}`, subtitle:`Periodo: ${label}`, html});
+8px'>Transferencias</h3>" +
+          tableHtml(["Fecha","Dirección","Otra cuenta","Importe"], trRows, new Set([3]));
+        
+
+Print.printHtml({title:`Extracto - ${acc?.name||""}`, subtitle:`Periodo: ${label}`, html});
       }});
 
-      const closeBtn = U.el("button",{class:"btn", text:"Cerrar"});
-      
+      const closeBtn = U.el
 
-const modal = U.openModal({ title:`Extracto - ${acc?.name||""}`, contentNode: content, footerNodes: [printBtn2, exportBtn2, 
+("button",{class:"btn", text:"Cerrar"});
+      const modal = U.openModal({ title:`Extracto - ${acc?.name||""}`, contentNode: 
 
-closeBtn] });
+content, footerNodes: [printBtn2, exportBtn2, closeBtn] });
       closeBtn.onclick = ()=> modal.close();
     }
 
-    return U.el("div",{},[head, cards]);
+    return U.el("div",{},
+
+[head, cards]);
   }
 
   async function viewAjustes(){
- 
-
-   setSubtitle("Opciones y apariencia");
+    setSubtitle("Opciones y apariencia");
     const s = state.settings;
 
-    const head = sectionHeader("Ajustes");
+    const head 
+
+= sectionHeader("Ajustes");
 
     // Period settings
-    
+    const modeSel = U.el("select",{});
+    modeSel.appendChild(U.el("option",
 
-const modeSel = U.el("select",{});
-    modeSel.appendChild(U.el("option",{value:"calendar", text:"Mes natural (día 1 a 
+{value:"calendar", text:"Mes natural (día 1 a 30/31)"}));
+    modeSel.appendChild(U.el("option",{value:"paycycle", text:"De 
 
-30/31)"}));
-    modeSel.appendChild(U.el("option",{value:"paycycle", text:"De cobro a cobro (día de inicio configurable)"}));
-    
+cobro a cobro (día de inicio configurable)"}));
+    modeSel.value = s.periodMode || "calendar";
 
-modeSel.value = s.periodMode || "calendar";
+    const startDayInp = U.el
 
-    const startDayInp = U.el("input",{class:"input", type:"number", min:"1", 
-
-max:"31"});
+("input",{class:"input", type:"number", min:"1", max:"31"});
     startDayInp.value = String(s.paycycleStartDay || 25);
 
-    const themeSel = U.el("select",{});
+    const 
+
+themeSel = U.el("select",{});
+    themeSel.appendChild(U.el("option",{value:"light", text:"Claro (suave) - por defecto"}));
     
 
-themeSel.appendChild(U.el("option",{value:"light", text:"Claro (suave) - por defecto"}));
-    themeSel.appendChild(U.el
+themeSel.appendChild(U.el("option",{value:"dark", text:"Oscuro"}));
+    themeSel.appendChild(U.el("option",
 
-("option",{value:"dark", text:"Oscuro"}));
-    themeSel.appendChild(U.el("option",{value:"contrast", text:"Alto 
-
-contraste"}));
+{value:"contrast", text:"Alto contraste"}));
     themeSel.value = s.theme || "light";
 
-    const currencyInfo = U.el("div",{class:"tiny muted", html:`Moneda: 
+    const currencyInfo = U.el("div",{class:"tiny 
 
-<b>EUR</b> · Formato: <b>es-ES</b> (1.000,00)`});
+muted", html:`Moneda: <b>EUR</b> · Formato: <b>es-ES</b> (1.000,00)`});
 
-    const savePeriodBtn = U.el("button",{class:"btn primary small", 
+    const savePeriodBtn = U.el("button",{class:"btn 
 
-text:"Guardar periodo"});
+primary small", text:"Guardar periodo"});
     savePeriodBtn.onclick = async ()=>{
       s.periodMode = modeSel.value;
-      s.paycycleStartDay = 
+      
 
-U.clamp(parseInt(startDayInp.value||"25",10) || 25, 1, 31);
+s.paycycleStartDay = U.clamp(parseInt(startDayInp.value||"25",10) || 25, 1, 31);
       await DB.saveSettings(state.db, s);
-      U.toast("Ajustes de periodo 
+      
 
-guardados.");
+U.toast("Ajustes de periodo guardados.");
       state.periodOffset = 0;
       await render();
     };
 
-    const saveThemeBtn = U.el("button",{class:"btn primary 
+    const saveThemeBtn = U.el
 
-small", text:"Guardar apariencia"});
+("button",{class:"btn primary small", text:"Guardar apariencia"});
     saveThemeBtn.onclick = async ()=>{
-      s.theme = themeSel.value;
-      await 
+      s.theme = 
 
-DB.saveSettings(state.db, s);
+themeSel.value;
+      await DB.saveSettings(state.db, s);
       applyTheme();
       U.toast("Apariencia guardada.");
     };
 
-    const periodCard = U.el("div",
+    const 
 
-{class:"card"},[
+periodCard = U.el("div",{class:"card"},[
       U.el("div",{class:"h2", text:"Periodo"}),
       U.el("hr",{class:"sep"}),
-      U.el("div",{class:"grid cols2"},[
-        
+      U.el("div",
 
-U.el("div",{},[U.el("div",{class:"tiny muted",text:"Modo de periodo"}), modeSel]),
-        U.el("div",{},[U.el("div",{class:"tiny 
+{class:"grid cols2"},[
+        U.el("div",{},[U.el("div",{class:"tiny muted",text:"Modo de periodo"}), modeSel]),
+        U.el("div",
 
-muted",text:"Día inicio (solo cobro a cobro)"}), startDayInp]),
+{},[U.el("div",{class:"tiny muted",text:"Día inicio (solo cobro a cobro)"}), startDayInp]),
       ]),
-      U.el("div",{class:"tiny muted", style:"margin-
+      U.el("div",{class:"tiny 
 
-top:10px"}, "Nota: si un mes no tiene ese día (ej: 31), se usará el último día del mes."),
-      U.el("div",{class:"row", 
+muted", style:"margin-top:10px"}, "Nota: si un mes no tiene ese día (ej: 31), se usará el último día del mes."),
+      U.el("div",
 
-style:"justify-content:flex-end;margin-top:10px"}, savePeriodBtn)
+{class:"row", style:"justify-content:flex-end;margin-top:10px"}, savePeriodBtn)
     ]);
 
-    const themeCard = U.el("div",{class:"card", 
+    const themeCard = U.el("div",
 
-style:"margin-top:12px"},[
+{class:"card", style:"margin-top:12px"},[
       U.el("div",{class:"h2", text:"Apariencia"}),
       U.el("hr",{class:"sep"}),
-      U.el("div",{class:"grid 
+      U.el
 
-cols2"},[
+("div",{class:"grid cols2"},[
         U.el("div",{},[U.el("div",{class:"tiny muted",text:"Tema"}), themeSel]),
-        U.el("div",{},[U.el("div",{class:"tiny 
+        U.el("div",{},
 
-muted",text:"Moneda y formato"}), currencyInfo]),
+[U.el("div",{class:"tiny muted",text:"Moneda y formato"}), currencyInfo]),
       ]),
-      U.el("div",{class:"row", style:"justify-content:flex-end;margin-
+      U.el("div",{class:"row", style:"justify-
 
-top:10px"}, saveThemeBtn)
+content:flex-end;margin-top:10px"}, saveThemeBtn)
     ]);
 
     // Categories management
-    const catCard = U.el("div",{class:"card", style:"margin-
+    const catCard = U.el("div",
 
-top:12px"},[
+{class:"card", style:"margin-top:12px"},[
       U.el("div",{class:"row space"},[
         U.el("div",{class:"h2", text:"Categorías"}),
-        U.el("span",{class:"badge", 
+        
 
-text:`${categories().length} total`})
+U.el("span",{class:"badge", text:`${categories().length} total`})
       ]),
       U.el("hr",{class:"sep"})
     ]);
 
-    const catList = U.el("div",{class:"list"});
-    function 
+    const catList = U.el
 
-renderCats(){
+("div",{class:"list"});
+    function renderCats(){
       catList.innerHTML = "";
       for(const c of categories()){
-        const del = U.el("button",{class:"btn small 
+        const del = U.el
 
-danger", text:"Borrar"});
+("button",{class:"btn small danger", text:"Borrar"});
         del.onclick = async ()=>{
-          const ok = await U.confirmDialog({title:"Borrar categoría", 
+          const ok = await U.confirmDialog
 
-message:`Se borrará la categoría "${c.name}". Los movimientos existentes conservarán el ID interno, pero dejarán de 
+({title:"Borrar categoría", message:`Se borrará la categoría "${c.name}". Los movimientos existentes conservarán el ID 
 
-mostrar el nombre. ¿Continuar?`, okText:"Borrar", cancelText:"Cancelar"});
+interno, pero dejarán de mostrar el nombre. ¿Continuar?`, okText:"Borrar", cancelText:"Cancelar"});
           if(!ok) return;
-          s.categories = 
+          
 
-s.categories.filter(x=>x.id!==c.id);
+s.categories = s.categories.filter(x=>x.id!==c.id);
           // remove budget
-          if(s.budgets && s.budgets[c.id]!=null) delete s.budgets[c.id];
-        
+          if(s.budgets && s.budgets[c.id]!=null) delete 
 
-  await DB.saveSettings(state.db, s);
+s.budgets[c.id];
+          await DB.saveSettings(state.db, s);
           U.toast("Categoría borrada.");
           await render();
         };
 
-        const nameInp = U.el
+        
 
-("input",{class:"input", value:c.name});
+const nameInp = U.el("input",{class:"input", value:c.name});
         nameInp.addEventListener("change", async ()=>{
-          c.name = 
+          
 
-nameInp.value.trim() || c.name;
+c.name = nameInp.value.trim() || c.name;
           await DB.saveSettings(state.db, s);
           U.toast("Categoría actualizada.");
-          await 
+          
 
-render();
+await render();
         });
 
         catList.appendChild(U.el("div",{class:"item"},[
